@@ -110,7 +110,7 @@ log n = do
     lift (tell [n])
     return n
 
-inc :: (Monad m) => Int -> Proxy a' a b' b m Int
+inc :: (Functor m) => Int -> Proxy a' a b' b m Int
 inc n = return (n + 1)
 
 correct :: String -> String
