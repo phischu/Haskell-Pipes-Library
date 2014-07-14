@@ -76,7 +76,7 @@ instance Functor m => Functor (Proxy a' a b' b m) where
             M          m   -> M (fmap go m)
             Pure    r      -> Pure (f r)
 
-instance Applicative m => Applicative (Proxy a' a b' b m) where
+instance Functor m => Applicative (Proxy a' a b' b m) where
     pure      = Pure
     pf <*> px = go pf where
         go p = case p of
@@ -85,12 +85,12 @@ instance Applicative m => Applicative (Proxy a' a b' b m) where
             M          m   -> M (fmap go m)
             Pure    f      -> fmap f px
 
-instance Monad m => Monad (Proxy a' a b' b m) where
+instance Functor m => Monad (Proxy a' a b' b m) where
     return = Pure
     (>>=)  = _bind
 
 _bind
-    :: Monad m
+    :: Functor m
     => Proxy a' a b' b m r
     -> (r -> Proxy a' a b' b m r')
     -> Proxy a' a b' b m r'
@@ -98,7 +98,7 @@ p0 `_bind` f = go p0 where
     go p = case p of
         Request a' fa  -> Request a' (\a  -> go (fa  a ))
         Respond b  fb' -> Respond b  (\b' -> go (fb' b'))
-        M          m   -> M (m >>= \p' -> return (go p'))
+        M          m   -> M (fmap go m)
         Pure    r      -> f r
 
 {-# RULES
@@ -107,7 +107,7 @@ p0 `_bind` f = go p0 where
     "_bind (Respond b  k) f" forall b  k f .
         _bind (Respond b  k) f = Respond b  (\b' -> _bind (k b') f);
     "_bind (M          m) f" forall m    f .
-        _bind (M          m) f = M (m >>= \p -> return (_bind p f));
+        _bind (M          m) f = M (fmap (\p -> _bind p f) m);
     "_bind (Pure    r   ) f" forall r    f .
         _bind (Pure    r   ) f = f r;
   #-}
@@ -122,14 +122,14 @@ instance MonadTrans (Proxy a' a b' b) where
     safe if you pass a monad morphism as the first argument.
 -}
 unsafeHoist
-    :: Monad m
+    :: Functor m
     => (forall x . m x -> n x) -> Proxy a' a b' b m r -> Proxy a' a b' b n r
 unsafeHoist nat = go
   where
     go p = case p of
         Request a' fa  -> Request a' (\a  -> go (fa  a ))
         Respond b  fb' -> Respond b  (\b' -> go (fb' b'))
-        M          m   -> M (nat (m >>= \p' -> return (go p')))
+        M          m   -> M (nat (fmap go m))
         Pure    r      -> Pure r
 {-# INLINABLE unsafeHoist #-}
 
@@ -148,13 +148,18 @@ instance MMonad (Proxy a' a b' b) where
         go p = case p of
             Request a' fa  -> Request a' (\a  -> go (fa  a ))
             Respond b  fb' -> Respond b  (\b' -> go (fb' b'))
-            M          m   -> f m >>= go
+            M          m   -> go' (f m) where
+                go' p' = case p' of
+                    Request a' fa  -> Request a' (\a  -> go' (fa  a ))
+                    Respond b  fb' -> Respond b  (\b' -> go' (fb' b'))
+                    M          m'   -> M (m' >>= return . go')
+                    Pure    r      -> go r
             Pure    r      -> Pure r
 
-instance MonadIO m => MonadIO (Proxy a' a b' b m) where
-    liftIO m = M (liftIO (m >>= \r -> return (Pure r)))
+instance (Functor m,MonadIO m) => MonadIO (Proxy a' a b' b m) where
+    liftIO m = M (liftIO (fmap Pure m))
 
-instance MonadReader r m => MonadReader r (Proxy a' a b' b m) where
+instance (Functor m,MonadReader r m) => MonadReader r (Proxy a' a b' b m) where
     ask = lift ask
     local f = go
         where
@@ -165,12 +170,12 @@ instance MonadReader r m => MonadReader r (Proxy a' a b' b m) where
               M       m      -> M (local f m >>= \r -> return (go r))
     reader = lift . reader
 
-instance MonadState s m => MonadState s (Proxy a' a b' b m) where
+instance (Functor m,MonadState s m) => MonadState s (Proxy a' a b' b m) where
     get = lift get
     put = lift . put
     state = lift . state
 
-instance MonadWriter w m => MonadWriter w (Proxy a' a b' b m) where
+instance (Functor m,MonadWriter w m) => MonadWriter w (Proxy a' a b' b m) where
     writer = lift . writer
     tell = lift . tell
     listen p0 = go p0 mempty
@@ -193,7 +198,7 @@ instance MonadWriter w m => MonadWriter w (Proxy a' a b' b m) where
                 return (go p' $! mappend w w') )
             Pure   (r, f)  -> M (pass (return (Pure r, \_ -> f w)))
 
-instance MonadError e m => MonadError e (Proxy a' a b' b m) where
+instance (Functor m,MonadError e m) => MonadError e (Proxy a' a b' b m) where
     throwError = lift . throwError
     catchError p0 f = go p0
       where
@@ -215,7 +220,7 @@ instance Alternative m => Alternative (Proxy a' a b' b m) where
             Pure    r      -> Pure r
             M          m   -> M (fmap go m <|> pure p1)
 
-instance MonadPlus m => MonadPlus (Proxy a' a b' b m) where
+instance (Functor m,MonadPlus m) => MonadPlus (Proxy a' a b' b m) where
     mzero = lift mzero
     mplus p0 p1 = go p0
       where

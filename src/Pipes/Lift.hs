@@ -60,10 +60,12 @@ import Pipes.Core (runEffect, request, respond, (//>), (>\\))
 
 -- | Distribute 'Proxy' over a monad transformer
 distribute
-    ::  ( Monad m
+    ::  ( Functor m
+        , Monad m
         , MonadTrans t
         , MFunctor t
-        , Monad (t m)
+        , Functor (t m)
+        , Functor (t (Proxy a' a b' b m))
         , Monad (t (Proxy a' a b' b m))
         )
     => Proxy a' a b' b (t m) r
@@ -78,7 +80,7 @@ distribute p =  runEffect $ request' >\\ unsafeHoist (hoist lift) p //> respond'
 
 -- | Wrap the base monad in 'E.ErrorT'
 errorP
-    :: (Monad m, E.Error e)
+    :: (Functor m, Monad m, E.Error e)
     => Proxy a' a b' b m (Either e r)
     -> Proxy a' a b' b (E.ErrorT e m) r
 errorP p = do
@@ -88,7 +90,7 @@ errorP p = do
 
 -- | Run 'E.ErrorT' in the base monad
 runErrorP
-    :: (Monad m, E.Error e)
+    :: (Functor m,Monad m, E.Error e)
     => Proxy a' a b' b (E.ErrorT e m) r
     -> Proxy a' a b' b m (Either e r)
 runErrorP    = E.runErrorT . distribute 
@@ -96,7 +98,7 @@ runErrorP    = E.runErrorT . distribute
 
 -- | Catch an error in the base monad
 catchError
-    :: (Monad m, E.Error e) 
+    :: (Functor m, Monad m, E.Error e) 
     => Proxy a' a b' b (E.ErrorT e m) r
     -- ^
     -> (e -> Proxy a' a b' b (E.ErrorT e m) r)
@@ -130,7 +132,7 @@ liftCatchError c p0 f = go p0
 
 -- | Wrap the base monad in 'M.MaybeT'
 maybeP
-    :: Monad m
+    :: (Functor m, Monad m)
     => Proxy a' a b' b m (Maybe r) -> Proxy a' a b' b (M.MaybeT m) r
 maybeP p = do
     x <- unsafeHoist lift p
@@ -139,7 +141,7 @@ maybeP p = do
 
 -- | Run 'M.MaybeT' in the base monad
 runMaybeP
-    :: Monad m
+    :: (Functor m, Monad m)
     => Proxy a' a b' b (M.MaybeT m) r
     -> Proxy a' a b' b m (Maybe r)
 runMaybeP p = M.runMaybeT $ distribute p
@@ -147,7 +149,7 @@ runMaybeP p = M.runMaybeT $ distribute p
 
 -- | Wrap the base monad in 'R.ReaderT'
 readerP
-    :: Monad m
+    :: (Functor m, Monad m)
     => (i -> Proxy a' a b' b m r) -> Proxy a' a b' b (R.ReaderT i m) r
 readerP k = do
     i <- lift R.ask
@@ -156,7 +158,7 @@ readerP k = do
 
 -- | Run 'R.ReaderT' in the base monad
 runReaderP
-    :: Monad m
+    :: (Functor m, Monad m)
     => i
     -> Proxy a' a b' b (R.ReaderT i m) r
     -> Proxy a' a b' b m r
@@ -165,7 +167,7 @@ runReaderP r p = (`R.runReaderT` r) $ distribute p
 
 -- | Wrap the base monad in 'S.StateT'
 stateP
-    :: Monad m
+    :: (Functor m, Monad m)
     => (s -> Proxy a' a b' b m (r, s)) -> Proxy a' a b' b (S.StateT s m) r
 stateP k = do
     s <- lift S.get
@@ -176,7 +178,7 @@ stateP k = do
 
 -- | Run 'S.StateT' in the base monad
 runStateP
-    :: Monad m
+    :: (Functor m, Monad m)
     => s
     -> Proxy a' a b' b (S.StateT s m) r
     -> Proxy a' a b' b m (r, s)
@@ -214,7 +216,7 @@ execStateP s p = fmap snd $ runStateP s p
 
 -- | Wrap the base monad in 'W.WriterT'
 writerP
-    :: (Monad m, Monoid w)
+    :: (Functor m, Monad m, Monoid w)
     => Proxy a' a b' b m (r, w) -> Proxy a' a b' b (W.WriterT w m) r
 writerP p = do
     (r, w) <- unsafeHoist lift p
@@ -224,7 +226,7 @@ writerP p = do
 
 -- | Run 'W.WriterT' in the base monad
 runWriterP
-    :: (Monad m, Monoid w)
+    :: (Functor m, Monad m, Monoid w)
     => Proxy a' a b' b (W.WriterT w m) r
     -> Proxy a' a b' b m (r, w)
 runWriterP p = W.runWriterT $ distribute p
@@ -240,7 +242,7 @@ execWriterP p = fmap snd $ runWriterP p
 
 -- | Wrap the base monad in 'RWS.RWST'
 rwsP
-    :: (Monad m, Monoid w)
+    :: (Functor m, Monad m, Monoid w)
     => (i -> s -> Proxy a' a b' b m (r, s, w))
     -> Proxy a' a b' b (RWS.RWST i w s m) r
 rwsP k = do
@@ -255,7 +257,7 @@ rwsP k = do
 
 -- | Run 'RWS.RWST' in the base monad
 runRWSP
-    :: (Monad m, Monoid w)
+    :: (Functor m, Monad m, Monoid w)
     => r
     -> s
     -> Proxy a' a b' b (RWS.RWST r w s m) d

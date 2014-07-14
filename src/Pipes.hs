@@ -128,7 +128,7 @@ f '~>' 'yield' = f
 'yield' :: 'Monad' m => a -> 'Pipe' x a m ()
 @
 -}
-yield :: Monad m => a -> Producer' a m ()
+yield :: a -> Producer' a m ()
 yield = respond
 {-# INLINABLE yield #-}
 
@@ -141,7 +141,7 @@ yield = respond
 'for' :: 'Monad' m => 'Pipe'   x b m r -> (b -> 'Pipe'     x c m ()) -> 'Pipe'     x c m r
 @
 -}
-for :: Monad m
+for :: Functor m
     =>       Proxy x' x b' b m a'
     -- ^
     -> (b -> Proxy x' x c' c m b')
@@ -198,7 +198,7 @@ for = (//>)
 @
 -}
 (~>)
-    :: Monad m
+    :: Functor m
     => (a -> Proxy x' x b' b m a')
     -- ^
     -> (b -> Proxy x' x c' c m b')
@@ -209,7 +209,7 @@ for = (//>)
 
 -- | ('~>') with the arguments flipped
 (<~)
-    :: Monad m
+    :: Functor m
     => (b -> Proxy x' x c' c m b')
     -- ^
     -> (a -> Proxy x' x b' b m a')
@@ -242,7 +242,7 @@ f '>~' 'await' = f
 'await' :: 'Monad' m => 'Pipe' a y m a
 @
 -}
-await :: Monad m => Consumer' a m a
+await :: Consumer' a m a
 await = request ()
 {-# INLINABLE await #-}
 
@@ -256,7 +256,7 @@ await = request ()
 @
 -}
 (>~)
-    :: Monad m
+    :: Functor m
     => Proxy a' a y' y m b
     -- ^
     -> Proxy () b y' y m c
@@ -267,7 +267,7 @@ p1 >~ p2 = (\() -> p1) >\\ p2
 
 -- | ('>~') with the arguments flipped
 (~<)
-    :: Monad m
+    :: Functor m
     => Proxy () b y' y m c
     -- ^
     -> Proxy a' a y' y m b
@@ -295,7 +295,7 @@ f '>->' 'cat' = f
 -}
 
 -- | The identity 'Pipe', analogous to the Unix @cat@ program
-cat :: Monad m => Pipe a a m r
+cat :: Pipe a a m r
 cat = pull ()
 {-# INLINABLE cat #-}
 
@@ -309,7 +309,7 @@ cat = pull ()
 @
 -}
 (>->)
-    :: Monad m
+    :: Functor m
     => Proxy a' a () b m r
     -- ^
     -> Proxy () b c' c m r
@@ -327,54 +327,52 @@ p1 >-> p2 = (\() -> p1) +>> p2
 -}
 newtype ListT m a = Select { enumerate :: Producer a m () }
 
-instance (Monad m) => Functor (ListT m) where
+instance (Functor m) => Functor (ListT m) where
     fmap f p = Select (for (enumerate p) (\a -> yield (f a)))
 
-instance (Monad m) => Applicative (ListT m) where
+instance (Functor m) => Applicative (ListT m) where
     pure a = Select (yield a)
     mf <*> mx = Select (
         for (enumerate mf) (\f ->
         for (enumerate mx) (\x ->
         yield (f x) ) ) )
 
-instance (Monad m) => Monad (ListT m) where
+instance (Functor m) => Monad (ListT m) where
     return a = Select (yield a)
     m >>= f  = Select (for (enumerate m) (\a -> enumerate (f a)))
     fail _   = mzero
 
 instance MonadTrans ListT where
-    lift m = Select (do
-        a <- lift m
-        yield a )
+    lift m = Select (M (m >>= return . yield))
 
-instance (MonadIO m) => MonadIO (ListT m) where
+instance (Functor m, MonadIO m) => MonadIO (ListT m) where
     liftIO m = lift (liftIO m)
 
-instance (Monad m) => Alternative (ListT m) where
+instance (Functor m) => Alternative (ListT m) where
     empty = Select (return ())
     p1 <|> p2 = Select (do
         enumerate p1
         enumerate p2 )
 
-instance (Monad m) => MonadPlus (ListT m) where
+instance (Functor m) => MonadPlus (ListT m) where
     mzero = empty
     mplus = (<|>)
 
 instance MFunctor ListT where
     hoist morph = Select . hoist morph . enumerate
 
-instance (Monad m) => Monoid (ListT m a) where
+instance (Functor m) => Monoid (ListT m a) where
     mempty = empty
     mappend = (<|>)
 
-instance (MonadState s m) => MonadState s (ListT m) where
+instance (Functor m, MonadState s m) => MonadState s (ListT m) where
     get     = lift  get
 
     put   s = lift (put   s)
 
     state f = lift (state f)
 
-instance (MonadWriter w m) => MonadWriter w (ListT m) where
+instance (Functor m, MonadWriter w m) => MonadWriter w (ListT m) where
     writer = lift . writer
 
     tell w = lift (tell w)
@@ -400,14 +398,14 @@ instance (MonadWriter w m) => MonadWriter w (ListT m) where
                 return (go p' $! mappend w w') )
             Pure     r          -> Pure r
 
-instance (MonadReader i m) => MonadReader i (ListT m) where
+instance (Functor m, MonadReader i m) => MonadReader i (ListT m) where
     ask = lift ask
 
     local f l = Select (local f (enumerate l))
 
     reader f = lift (reader f)
 
-instance (MonadError e m) => MonadError e (ListT m) where
+instance (Functor m, MonadError e m) => MonadError e (ListT m) where
     throwError e = lift (throwError e)
 
     catchError l k = Select (catchError (enumerate l) (\e -> enumerate (k e)))
@@ -436,23 +434,23 @@ instance Enumerable ListT where
     toListT = id
 
 instance Enumerable IdentityT where
-    toListT m = Select $ do
-        a <- lift $ runIdentityT m
-        yield a
+    toListT m = Select (M (do
+        a <- runIdentityT m
+        return (yield a)))
 
 instance Enumerable MaybeT where
-    toListT m = Select $ do
-        x <- lift $ runMaybeT m
+    toListT m = Select (M (do
+        x <- runMaybeT m
         case x of
-            Nothing -> return ()
-            Just a  -> yield a
+            Nothing -> return (Pure ())
+            Just a  -> return (yield a)))
 
 instance Enumerable (ErrorT e) where
-    toListT m = Select $ do
-        x <- lift $ runErrorT m
+    toListT m = Select (M (do
+        x <- runErrorT m
         case x of
-            Left  _ -> return ()
-            Right a -> yield a
+            Left  _ -> return (Pure ())
+            Right a -> return (yield a)))
 
 {-| Consume the first value from a 'Producer'
 
@@ -470,7 +468,7 @@ next = go
 {-# INLINABLE next #-}
 
 -- | Convert a 'F.Foldable' to a 'Producer'
-each :: (Monad m, Foldable f) => f a -> Producer' a m ()
+each :: (Functor m, Foldable f) => f a -> Producer' a m ()
 each = F.foldr (\a p -> yield a >> p) (return ())
 {-# INLINABLE each #-}
 {-  The above code is the same as:
@@ -482,7 +480,7 @@ each = F.foldr (\a p -> yield a >> p) (return ())
 -}
 
 -- | Convert an 'Enumerable' to a 'Producer'
-every :: (Monad m, Enumerable t) => t m a -> Producer' a m ()
+every :: (Functor m, Monad m, Enumerable t) => t m a -> Producer' a m ()
 every it = discard >\\ enumerate (toListT it)
 {-# INLINABLE every #-}
 
@@ -493,7 +491,7 @@ discard _ = return ()
 
 -- | ('>->') with the arguments flipped
 (<-<)
-    :: Monad m
+    :: Functor m
     => Proxy () b c' c m r
     -- ^
     -> Proxy a' a () b m r
